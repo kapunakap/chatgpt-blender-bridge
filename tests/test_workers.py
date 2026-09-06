@@ -9,9 +9,11 @@ import unittest
 
 from blender_bridge.workers import (
     DEFAULT_SINGLE_USER_PORT,
+    WorkerBusyError,
     WorkerError,
     WorkerManager,
     detect_blender_bin,
+    detect_blender_mcp_command,
 )
 
 
@@ -34,6 +36,53 @@ class WorkerManagerUnitTests(unittest.TestCase):
             fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             fake.chmod(0o755)
             self.assertEqual(detect_blender_bin(str(fake)), fake.resolve())
+
+    def test_detect_blender_mcp_honors_explicit_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fake = Path(raw) / "blender-mcp"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            self.assertEqual(detect_blender_mcp_command(str(fake)), fake.resolve())
+
+    def test_worker_session_lease_rejects_other_process(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            temp = Path(raw)
+            manager = WorkerManager.__new__(WorkerManager)
+            manager.session_leases_dir = temp / "leases"
+            manager.session_leases_dir.mkdir()
+            manager.status = lambda: [{
+                "id": "worker-1",
+                "healthy": True,
+                "busy": False,
+                "host": "127.0.0.1",
+                "port": 9970,
+            }]
+            child_code = """
+from pathlib import Path
+import sys
+from blender_bridge.workers import WorkerBusyError, WorkerManager
+m = WorkerManager.__new__(WorkerManager)
+m.session_leases_dir = Path(sys.argv[1])
+m.status = lambda: [{'id':'worker-1','healthy':True,'busy':False,'host':'127.0.0.1','port':9970}]
+try:
+    with m.lease_worker('worker-1'):
+        pass
+except WorkerBusyError:
+    raise SystemExit(74)
+raise SystemExit(0)
+"""
+            with manager.lease_worker("worker-1") as leased:
+                self.assertEqual(leased["id"], "worker-1")
+                proc = subprocess.run(
+                    [sys.executable, "-c", child_code, str(manager.session_leases_dir)],
+                    cwd=Path(__file__).resolve().parents[1],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(proc.returncode, 74, proc.stderr)
+            with manager.lease_worker("worker-1"):
+                pass
 
     def test_source_write_lock_rejects_other_process(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

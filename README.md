@@ -93,9 +93,9 @@ bash scripts/acceptance-test.sh
 
 Unlike the original TCP-only gate, this launches the configured Blender MCP stdio server, performs MCP initialization/tool discovery, and executes the read-only `get_blendfile_summary_datablocks` tool against the running Blender instance.
 
-## Isolated multi-worker jobs
+## Isolated multi-worker sessions
 
-For concurrent agent jobs, use the optional worker manager. It starts independent persistent Blender processes on authenticated loopback-only endpoints, routes each job to a chosen worker, creates per-job `.blend` copies, and enforces exclusive source-file publishing. The existing interactive Blender Lab MCP endpoint on `127.0.0.1:9876` remains unchanged.
+For concurrent users/jobs, the worker manager starts independent Blender processes on distinct **native Blender Lab MCP** loopback endpoints. `scripts/blender-worker-mcp.py` leases one worker for each stdio MCP session, so concurrent ChatGPT sessions do not share Blender selection, mode, scene, undo, save, export, or render state.
 
 ```bash
 python3 scripts/blender-workers.py start --count 3 --base-port 9970
@@ -103,7 +103,9 @@ python3 scripts/blender-workers.py status
 python3 scripts/multi-worker-acceptance.py
 ```
 
-See [`docs/multi-worker.md`](docs/multi-worker.md) for routing, locking, GUI-worker, health/restart, and real-Blender acceptance details.
+For tunnel integration, point the local MCP command at the router wrapper instead of directly at `blender-mcp`. The wrapper can `--ensure-count 3` and route each session with `--worker auto`. The original interactive endpoint on `127.0.0.1:9876` remains unchanged.
+
+See [`docs/multi-worker.md`](docs/multi-worker.md) and [`config/tunnel-client-multi-worker.yaml.example`](config/tunnel-client-multi-worker.yaml.example).
 
 ## Configuration
 

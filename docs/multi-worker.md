@@ -1,37 +1,49 @@
 # Multi-worker Blender sessions
 
-Issue #4 adds a local worker manager for isolated concurrent Blender jobs. It is designed to sit **behind** the existing private/tunnel model and does not replace the verified single-user Blender Lab MCP endpoint on `127.0.0.1:9876`.
+Issue #4 adds a worker manager and MCP session router for concurrent Blender work without sharing one mutable interactive scene.
+
+The existing verified single-user path on `127.0.0.1:9876` remains supported. Multi-worker mode uses additional loopback-only ports and the **same native Blender Lab MCP socket protocol** that the normal `blender-mcp` stdio server already uses.
 
 ## Architecture
 
 ```text
-ChatGPT / automation jobs
+ChatGPT / MCP clients
         |
         v
-scripts/blender-workers.py
-(worker manager / router)
+OpenAI Secure MCP Tunnel / tunnel-client
         |
-        +--> 127.0.0.1:9970 -> worker-1 -> Blender process -> job copy A
-        +--> 127.0.0.1:9971 -> worker-2 -> Blender process -> job copy B
-        +--> 127.0.0.1:9972 -> worker-3 -> Blender process -> job copy C
+        v
+scripts/blender-worker-mcp.py
+(one stdio session -> one worker lease)
+        |
+        +--> worker-1 127.0.0.1:9970 -> native Blender Lab MCP -> Blender process
+        +--> worker-2 127.0.0.1:9971 -> native Blender Lab MCP -> Blender process
+        +--> worker-3 127.0.0.1:9972 -> native Blender Lab MCP -> Blender process
 
-Existing interactive path remains separate:
-ChatGPT -> Secure MCP Tunnel -> Blender Lab MCP -> 127.0.0.1:9876 -> GUI Blender
+Existing single-user path stays separate:
+ChatGPT -> tunnel-client -> blender-mcp -> 127.0.0.1:9876 -> interactive Blender
 ```
 
-Each managed worker is a real persistent Blender process. Background workers run with `blender --background --factory-startup`. An optional GUI worker can be requested for manual inspection while the remaining workers stay headless.
+Background workers are launched with Blender Lab MCP's native background command:
 
-The managed worker protocol is an internal control plane, not a public MCP service. Every worker:
+```bash
+blender --background --online-mode \
+  --command blender_mcp \
+  --host 127.0.0.1 \
+  --port 9970
+```
 
-- binds only to `127.0.0.1`,
-- has a distinct TCP port,
-- has a random authentication token stored in a mode-`0600` file,
-- stores state/logs under a private mode-`0700` runtime directory,
-- executes Blender Python only after the manager authenticates the request.
+An optional GUI worker uses the installed Blender Lab MCP add-on in a normal Blender process and moves its listener to the assigned worker port.
 
-Do not expose worker ports through a public listener or port-forward them to another network.
+## Security boundary
 
-## Start a pool
+Worker endpoints are intentionally bound to `127.0.0.1` only. They are not public services and must not be port-forwarded or bound to `0.0.0.0`.
+
+Blender Lab MCP's local socket is trusted-localhost infrastructure; it does not add a separate authentication layer per worker. The public/cloud boundary remains the existing OpenAI Secure MCP Tunnel + local `tunnel-client` model.
+
+The manager stores state and worker-session locks in a private runtime directory (`0700` where supported). Source-file locks are also local OS locks.
+
+## Start or reuse a pool
 
 The default runtime directory is:
 
@@ -48,57 +60,83 @@ python3 scripts/blender-workers.py start --count 3 --base-port 9970
 Start one GUI worker plus two background workers:
 
 ```bash
-python3 scripts/blender-workers.py start --count 3 --gui-count 1 --base-port 9970
+python3 scripts/blender-workers.py start \
+  --count 3 \
+  --gui-count 1 \
+  --base-port 9970
 ```
 
-Port `9876` is reserved by the manager so the existing single-user Blender Lab MCP workflow cannot be accidentally replaced.
+Starting the same pool again reuses healthy workers. Port `9876` is reserved by the manager so multi-worker mode cannot accidentally consume the verified single-user endpoint.
 
-Use another private runtime when multiple independent manager pools are required:
+## Route a real MCP session
+
+`scripts/blender-worker-mcp.py` is a stdio MCP routing wrapper. It acquires an exclusive worker lease for the entire MCP session, sets `BLENDER_MCP_HOST` / `BLENDER_MCP_PORT`, and launches the installed `blender-mcp --transport stdio` server.
+
+Route automatically to the first healthy free worker:
 
 ```bash
-python3 scripts/blender-workers.py \
-  --runtime "$HOME/.cache/chatgpt-blender-bridge/pool-b" \
-  start --count 3 --base-port 9980
+BLENDER_MCP_COMMAND="$HOME/.local/share/blender-mcp/v1.0.0-venv/bin/blender-mcp" \
+python3 scripts/blender-worker-mcp.py --worker auto
 ```
 
-## Observe health
+Pin the session to one worker:
+
+```bash
+python3 scripts/blender-worker-mcp.py --worker worker-2
+```
+
+The wrapper can also ensure the pool exists before accepting the stdio session:
+
+```bash
+python3 scripts/blender-worker-mcp.py \
+  --ensure-count 3 \
+  --base-port 9970 \
+  --worker auto
+```
+
+Two concurrent `auto` stdio sessions cannot acquire the same worker lease. A direct manager job uses the same lease mechanism, so automation jobs and ChatGPT sessions also cannot mutate one Blender process concurrently.
+
+Environment equivalents are available for tunnel/service configuration:
+
+```text
+CHATGPT_BLENDER_WORKER_RUNTIME
+BLENDER_BIN
+BLENDER_MCP_COMMAND
+BLENDER_WORKER_ID
+BLENDER_WORKER_COUNT
+BLENDER_WORKER_GUI_COUNT
+BLENDER_WORKER_BASE_PORT
+```
+
+See `config/tunnel-client-multi-worker.yaml.example` for a sanitized tunnel command pattern.
+
+## Observe health and occupancy
 
 ```bash
 python3 scripts/blender-workers.py status
 ```
 
-Status is JSON and includes worker ID, PID, mode, host, port, process state, endpoint health, active `.blend` path, object count, and log path.
+Status reports:
 
-A healthy pool can be started again with the same count/base port and reused. To recover a failed or stale worker without touching unrelated workers:
+- worker ID, PID, mode, host, and port,
+- protocol (`blender-lab-mcp-socket`),
+- process and endpoint health,
+- `busy` session/job lease state,
+- current blend path/object summary when the worker is idle,
+- log path.
 
-```bash
-python3 scripts/blender-workers.py restart --worker worker-2
-```
+A busy worker is considered healthy from its verified process identity without injecting a diagnostic Python request into a job that is currently running.
 
-For a deliberate hard-failure test:
+## Route a file job
 
-```bash
-python3 scripts/blender-workers.py kill --worker worker-2
-python3 scripts/blender-workers.py status
-python3 scripts/blender-workers.py restart --worker worker-2
-```
-
-Stop the managed pool:
-
-```bash
-python3 scripts/blender-workers.py stop
-```
-
-## Route a job
-
-A job is a Blender Python script plus a source `.blend` file. The worker manager always creates a private working copy first:
+A manager job is a Blender Python script plus a source `.blend`. Before execution, the manager creates:
 
 ```text
 <runtime>/jobs/<job-id>/source.blend
 <runtime>/jobs/<job-id>/result.blend
 ```
 
-Run a modelling/export/render script on a specific worker:
+Example:
 
 ```bash
 python3 scripts/blender-workers.py run \
@@ -108,21 +146,21 @@ python3 scripts/blender-workers.py run \
   --job-id city-20260907
 ```
 
-Inside the job script these globals are provided:
+The job script receives:
 
 - `bpy`
+- `Path`
 - `JOB_ID`
 - `JOB_DIR`
 - `RESULT_PATH`
 - `WORKER_ID`
 - `WORKER_PORT`
-- `Path`
 
-The default job never overwrites the source file. This is the preferred mode for agent work because jobs can safely operate on independent copies in parallel.
+Normal jobs never overwrite the source file. Different source files/jobs can run on different workers in parallel.
 
-## Source write ownership
+## Exclusive source publishing
 
-Publishing a result back to the mutable source is explicit:
+Publishing back to the mutable source is explicit:
 
 ```bash
 python3 scripts/blender-workers.py run \
@@ -133,36 +171,61 @@ python3 scripts/blender-workers.py run \
   --write-source
 ```
 
-`--write-source` holds an OS-level exclusive lock for the canonical source path for the complete job and atomic publish. Source locks live in a user-global private directory (`~/.cache/chatgpt-blender-bridge/source-locks` by default), so separate worker pools cannot bypass one another by using different runtime directories. A second writer to the same source is rejected immediately with exit code `73` and JSON error code `source_busy`. Set `CHATGPT_BLENDER_SOURCE_LOCK_DIR` only when you intentionally need a different shared lock root.
+`--write-source` holds an OS-level exclusive lock for the canonical source path for the full job and atomic publish. A second writer is rejected with exit code `73` and error code `source_busy`.
 
-Different source files can be written concurrently. Read/copy jobs do not need the source write lock because they mutate only their per-job copies.
+Source locks are user-global by default:
 
-## Crash and stale-worker model
+```text
+~/.cache/chatgpt-blender-bridge/source-locks
+```
 
-Worker state is persisted in `<runtime>/workers.json`. A worker is healthy only when both are true:
+That prevents separate worker runtime directories from bypassing the same-file write rule. Override with `CHATGPT_BLENDER_SOURCE_LOCK_DIR` only when all cooperating processes use the same alternate lock root.
 
-1. its PID still exists, and
-2. its authenticated loopback endpoint answers `ping`.
+## Crash recovery
 
-`status` makes stale/crashed workers visible. `restart --worker <id>` stops any surviving stale process, preserves the worker's port/mode assignment, creates a fresh token, and starts a replacement Blender process. Unrelated workers are not restarted.
+Worker state is persisted in `<runtime>/workers.json`. A free worker is healthy only when its recorded PID exists and its native Blender Lab MCP endpoint returns the same PID. A leased/busy worker is checked by process identity without sending an extra request into the active job.
+
+Inspect and restart one worker without touching the others:
+
+```bash
+python3 scripts/blender-workers.py status
+python3 scripts/blender-workers.py restart --worker worker-2
+```
+
+A deliberate hard-failure test is available:
+
+```bash
+python3 scripts/blender-workers.py kill --worker worker-2
+python3 scripts/blender-workers.py status
+python3 scripts/blender-workers.py restart --worker worker-2
+```
+
+Stop all managed workers:
+
+```bash
+python3 scripts/blender-workers.py stop
+```
+
+Before signaling a persisted PID, the manager verifies its process command still matches the expected Blender worker. This avoids killing an unrelated process after PID reuse.
 
 ## Real acceptance
 
-Run the macOS real-Blender gate:
+Run:
 
 ```bash
 python3 scripts/multi-worker-acceptance.py
 ```
 
-It uses the installed Blender executable and proves all of the following with real processes/files rather than mocks:
+This is a **real Blender** gate. It proves:
 
-- three distinct Blender PIDs on three distinct loopback ports,
-- two independent jobs overlap in time without object/state leakage,
+- three distinct Blender processes on three distinct native Blender Lab MCP loopback endpoints,
+- two concurrent real `blender-mcp` stdio sessions routed to different worker PIDs,
+- two independent modelling jobs overlap without state leakage,
 - a third worker exports a real GLB while other workers are busy,
-- source files remain byte-identical for normal per-job-copy work,
-- a concurrent second source writer is rejected,
-- worker health is observable,
-- a hard-killed worker restarts on the same endpoint while the other worker PIDs remain unchanged,
-- managed worker ports do not consume the legacy single-user port `9876`.
+- normal jobs operate on per-job copies and leave source hashes unchanged,
+- concurrent write access to the same source is rejected,
+- health/occupancy is observable,
+- a hard-killed worker restarts without changing unrelated worker PIDs,
+- managed ports do not consume legacy port `9876`.
 
-The final existing single-user ChatGPT/Blender plugin acceptance remains separate: use `scripts/acceptance-test.sh` and the live `@Blender` path as documented in `docs/verified-acceptance.md`.
+The optional GUI-worker path is also directly testable with `--gui-count 1`. The existing single-user ChatGPT acceptance remains separate and should still pass through the live `@Blender` plugin.
