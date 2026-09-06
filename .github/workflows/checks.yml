@@ -16,6 +16,10 @@ jobs:
         run: bash -n scripts/*.sh
       - name: ShellCheck
         run: shellcheck scripts/*.sh
+      - name: Python syntax
+        run: python3 -m py_compile blender_bridge/*.py scripts/*.py tests/*.py
+      - name: Python unit tests
+        run: python3 -m unittest discover -s tests -v
 
   secret-scan:
     runs-on: ubuntu-latest

@@ -12,6 +12,7 @@ config/*.yaml
 config/*.local.*
 
 # Logs / runtime state
+.blender-workers/
 logs/
 *.log
 *.pid

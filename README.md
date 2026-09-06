@@ -93,6 +93,18 @@ bash scripts/acceptance-test.sh
 
 Unlike the original TCP-only gate, this launches the configured Blender MCP stdio server, performs MCP initialization/tool discovery, and executes the read-only `get_blendfile_summary_datablocks` tool against the running Blender instance.
 
+## Isolated multi-worker jobs
+
+For concurrent agent jobs, use the optional worker manager. It starts independent persistent Blender processes on authenticated loopback-only endpoints, routes each job to a chosen worker, creates per-job `.blend` copies, and enforces exclusive source-file publishing. The existing interactive Blender Lab MCP endpoint on `127.0.0.1:9876` remains unchanged.
+
+```bash
+python3 scripts/blender-workers.py start --count 3 --base-port 9970
+python3 scripts/blender-workers.py status
+python3 scripts/multi-worker-acceptance.py
+```
+
+See [`docs/multi-worker.md`](docs/multi-worker.md) for routing, locking, GUI-worker, health/restart, and real-Blender acceptance details.
+
 ## Configuration
 
 Copy the local target example:
