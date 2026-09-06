@@ -6,7 +6,8 @@ Only sanitized examples belong in this directory.
 
 The 2026-09-06 end-to-end repair produced two public-safe templates:
 
-- `tunnel-client.yaml.example` — the verified tunnel-client profile structure for a stdio Blender MCP server.
+- `tunnel-client.yaml.example` — the verified single-user tunnel-client profile structure for a stdio Blender MCP server.
+- `tunnel-client-multi-worker.yaml.example` — the Issue #4 router pattern that leases a native Blender MCP worker per stdio session.
 - `launchd.plist.example` — the verified macOS user LaunchAgent pattern with `RunAtLoad` and `KeepAlive`.
 
 `env.example` configures the local diagnostic/acceptance scripts.
@@ -18,6 +19,9 @@ The tracked templates use obvious tokens such as:
 - `__TUNNEL_ID__`
 - `__RUNTIME_KEY_FILE__`
 - `__BLENDER_MCP_COMMAND__`
+- `__BLENDER_BIN__`
+- `__BLENDER_WORKER_MCP_COMMAND__`
+- `__WORKER_RUNTIME__`
 - `__HEALTH_URL_FILE__`
 - `__LOG_FILE__`
 - `__HOME__`

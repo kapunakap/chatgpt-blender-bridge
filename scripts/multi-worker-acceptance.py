@@ -23,6 +23,7 @@ from blender_bridge.workers import (  # noqa: E402
     SourceBusyError,
     WorkerManager,
     detect_blender_bin,
+    detect_blender_mcp_command,
 )
 
 
@@ -115,6 +116,57 @@ def main() -> int:
             scripts / "write_source.py",
             """import bpy, time\nbpy.ops.mesh.primitive_cone_add(location=(0,0,2))\nbpy.context.active_object.name='PublishedByWriter'\ntime.sleep(2.0)\n""",
         )
+        mcp_probe = write(
+            scripts / "mcp_session_probe.py",
+            r'''import asyncio
+import json
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+
+async def main() -> None:
+    params = StdioServerParameters(
+        command=sys.argv[1],
+        args=[
+            "--runtime", sys.argv[2],
+            "--worker", "auto",
+            "--mcp-command", sys.argv[3],
+            "--blender-bin", sys.argv[4],
+            "--ensure-count", "3",
+            "--base-port", sys.argv[5],
+        ],
+        env=None,
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            init = await session.initialize()
+            tools = await session.list_tools()
+            response = await session.call_tool(
+                "execute_blender_code",
+                {
+                    "code": (
+                        "import bpy, os, time\n"
+                        "time.sleep(1.5)\n"
+                        "result={'pid':os.getpid(),'background':bool(bpy.app.background)}"
+                    )
+                },
+            )
+            structured = getattr(response, "structuredContent", None) or {}
+            worker_result = structured.get("result", {}) if isinstance(structured, dict) else {}
+            print(json.dumps({
+                "server": getattr(init.serverInfo, "name", None),
+                "tool_count": len(tools.tools),
+                "is_error": bool(getattr(response, "isError", False)),
+                "pid": worker_result.get("pid"),
+                "background": worker_result.get("background"),
+            }, sort_keys=True))
+
+
+asyncio.run(main())
+''',
+        )
 
         manager = WorkerManager(runtime_dir=runtime, blender_bin=blender)
         try:
@@ -125,7 +177,49 @@ def main() -> int:
             pids = [int(item["pid"]) for item in started]
             assert len(set(ports)) == 3 and len(set(pids)) == 3
             assert all(port != DEFAULT_SINGLE_USER_PORT for port in ports)
-            report["three_workers"] = {"ports": ports, "pids": pids, "healthy": True}
+            assert all(item.get("protocol") == "blender-lab-mcp-socket" for item in started)
+            assert all(item.get("busy") is False for item in started)
+            report["three_workers"] = {
+                "ports": ports,
+                "pids": pids,
+                "healthy": True,
+                "protocol": "blender-lab-mcp-socket",
+            }
+
+            mcp_command = detect_blender_mcp_command()
+            mcp_python = mcp_command.parent / "python"
+            if not mcp_python.is_file():
+                raise RuntimeError(f"MCP environment Python not found next to {mcp_command}")
+            mcp_wrapper = ROOT / "scripts" / "blender-worker-mcp.py"
+            probe_args = [
+                str(mcp_python), str(mcp_probe), str(mcp_wrapper), str(runtime),
+                str(mcp_command), str(blender), str(base_port),
+            ]
+            session_one = subprocess.Popen(
+                probe_args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            time.sleep(0.1)
+            session_two = subprocess.Popen(
+                probe_args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            out_one, err_one = session_one.communicate(timeout=90)
+            out_two, err_two = session_two.communicate(timeout=90)
+            assert session_one.returncode == 0, err_one
+            assert session_two.returncode == 0, err_two
+            probe_one = json.loads(out_one.strip().splitlines()[-1])
+            probe_two = json.loads(out_two.strip().splitlines()[-1])
+            assert probe_one["server"] == "blender-mcp" and probe_two["server"] == "blender-mcp"
+            assert not probe_one["is_error"] and not probe_two["is_error"]
+            assert probe_one["background"] is True and probe_two["background"] is True
+            assert int(probe_one["pid"]) in pids and int(probe_two["pid"]) in pids
+            assert int(probe_one["pid"]) != int(probe_two["pid"])
+            report["stdio_mcp_session_routing"] = {
+                "server": "blender-mcp",
+                "session_one_pid": int(probe_one["pid"]),
+                "session_two_pid": int(probe_two["pid"]),
+                "distinct_workers": True,
+                "tool_count": min(int(probe_one["tool_count"]), int(probe_two["tool_count"])),
+            }
 
             wall_start = time.time()
             with ThreadPoolExecutor(max_workers=3) as pool:
@@ -242,6 +336,8 @@ def main() -> int:
 
             final_status = manager.status()
             assert len(final_status) == 3 and all(item["healthy"] for item in final_status)
+            assert all(not item.get("busy", False) for item in final_status)
+            assert all(item.get("protocol") == "blender-lab-mcp-socket" for item in final_status)
             report["health_observable"] = final_status
             report["single_user_compatibility"] = {
                 "legacy_port": DEFAULT_SINGLE_USER_PORT,

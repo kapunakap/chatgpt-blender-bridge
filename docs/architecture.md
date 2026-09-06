@@ -72,17 +72,24 @@ The first tracked end-to-end failure is Issue #1: ChatGPT receives a 502 when in
 
 ## Isolated multi-worker control plane
 
-Issue #4 adds a separate local worker-manager path for concurrent modelling, export, render, and validation jobs:
+Issue #4 adds a session router in front of multiple **native Blender Lab MCP** endpoints:
 
 ```text
-worker manager / router
-  ├─ 127.0.0.1:9970 -> persistent Blender worker
-  ├─ 127.0.0.1:9971 -> persistent Blender worker
-  └─ 127.0.0.1:9972 -> persistent Blender worker
+ChatGPT / MCP client
+  ↓
+tunnel-client
+  ↓ stdio
+blender-worker-mcp.py
+  ↓ one exclusive session lease
+  ├─ blender-mcp -> 127.0.0.1:9970 -> Blender Lab MCP -> worker-1
+  ├─ blender-mcp -> 127.0.0.1:9971 -> Blender Lab MCP -> worker-2
+  └─ blender-mcp -> 127.0.0.1:9972 -> Blender Lab MCP -> worker-3
 ```
 
-This control plane is intentionally separate from the verified single-user Blender Lab MCP endpoint on `127.0.0.1:9876`. Managed worker ports are loopback-only and authenticated with per-worker random tokens kept in the private runtime directory.
+Background workers use Blender Lab MCP's built-in `blender --background --online-mode --command blender_mcp --host ... --port ...` path. The session router does not invent a second Blender protocol: it sets `BLENDER_MCP_HOST` and `BLENDER_MCP_PORT` for the normal `blender-mcp` stdio server.
 
-Jobs route explicitly by worker ID. Each job opens a private working copy and writes a separate `result.blend`. Publishing a result back to a mutable source requires an OS-level exclusive source lock, so two workers cannot concurrently write the same canonical `.blend` file.
+One OS file lease is held for each routed MCP session or direct manager job, preventing two callers from using the same Blender process at the same time. Per-job working copies and a separate user-global source-file lock prevent accidental concurrent writes to the same canonical `.blend` file.
 
-See [`multi-worker.md`](multi-worker.md) for lifecycle, routing, file isolation, health/restart behavior, and the real-Blender acceptance gate.
+All managed Blender endpoints bind to loopback only. The existing single-user `127.0.0.1:9876` endpoint is reserved and remains supported.
+
+See [`multi-worker.md`](multi-worker.md) for lifecycle, routing, locking, health/restart, and real-Blender acceptance.
