@@ -1,0 +1,34 @@
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+*.token
+*.key
+config/*.yaml
+!config/*.example
+!config/*.yaml.example
+config/*.local.*
+
+# Logs / runtime state
+logs/
+*.log
+*.pid
+*.sock
+
+# Blender project/cache files are out of scope by default
+*.blend
+*.blend1
+*.blend2
+__pycache__/
+*.pyc
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary files
+.tmp/
+tmp/
