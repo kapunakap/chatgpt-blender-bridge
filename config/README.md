@@ -2,19 +2,51 @@
 
 Only sanitized examples belong in this directory.
 
-## Current state
+## Verified examples
 
-`env.example` contains the local Blender MCP target used by the diagnostic scripts.
+The 2026-09-06 end-to-end repair produced two public-safe templates:
 
-A runnable `tunnel-client.yaml.example` is **intentionally not committed yet** because the exact current tunnel-client schema/command line must be captured from a successful end-to-end repair first. Publishing a guessed schema would make this repository harder to use.
+- `tunnel-client.yaml.example` — the verified tunnel-client profile structure for a stdio Blender MCP server.
+- `launchd.plist.example` — the verified macOS user LaunchAgent pattern with `RunAtLoad` and `KeepAlive`.
 
-Issue #1 is the gate for adding the first verified tunnel-client example.
+`env.example` configures the local diagnostic/acceptance scripts.
 
-## Rule for future examples
+## Placeholder rules
 
-Before committing a tunnel config example:
+The tracked templates use obvious tokens such as:
 
-1. prove it with a real ChatGPT → tunnel → Blender call,
-2. replace every credential/private endpoint with a placeholder,
-3. verify the example contains no machine-specific identifiers,
-4. document the tested tunnel-client version in `versions.env`.
+- `__TUNNEL_ID__`
+- `__RUNTIME_KEY_FILE__`
+- `__BLENDER_MCP_COMMAND__`
+- `__HEALTH_URL_FILE__`
+- `__LOG_FILE__`
+- `__HOME__`
+- `__PROFILE_DIR__`
+- `__LAUNCHD_LOG_DIR__`
+
+They are **not** shell-expanded automatically inside YAML/plist files. Render or replace them locally before use.
+
+Never commit the rendered private profile, tunnel ID/key material, private URLs, auth codes, or raw logs.
+
+## Recommended local locations
+
+A clean macOS installation can use:
+
+```text
+~/.config/tunnel-client/blender-mcp.yaml
+~/.config/tunnel-client/keys/blender-mcp-runtime-key
+~/Library/LaunchAgents/com.example.chatgpt-blender-bridge.plist
+~/Library/Application Support/tunnel-client/blender-mcp.health.url
+~/Library/Logs/chatgpt-blender-bridge/
+```
+
+Use restrictive permissions (`0600`) for the tunnel profile, key file, and installed LaunchAgent.
+
+## Verification rule
+
+Before calling a configuration working:
+
+1. Blender must own the loopback MCP listener.
+2. The local stdio MCP acceptance must initialize, discover tools, and execute a read-only Blender tool.
+3. tunnel-client `/healthz` and `/readyz` must be healthy.
+4. The real ChatGPT `@Blender` path must complete a live scene read and harmless Python operation without a 502.

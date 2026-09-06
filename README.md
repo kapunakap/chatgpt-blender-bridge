@@ -2,45 +2,38 @@
 
 A reproducible, security-conscious reference setup for connecting ChatGPT to a local Blender instance through an MCP bridge.
 
-> **Status:** early public work in progress. The first end-to-end regression is tracked in [Issue #1](https://github.com/kapunakap/chatgpt-blender-bridge/issues/1). Do not assume the bridge is working until the real ChatGPT acceptance test passes.
+> **Status:** verified working on macOS. On 2026-09-06 the full ChatGPT → OpenAI Secure MCP Tunnel → tunnel-client → Blender MCP → running Blender path passed live read and harmless Python execution acceptance with no 502.
 
-## What this repository is for
+## Verified stack
 
-This project documents and automates the path:
+- Blender: **5.2.1 LTS**
+- Blender Lab MCP: **v1.0.0**
+- tunnel-client: **0.0.13+4b5267f823be0b046bb883aacb51603cfde3a0ea**
+- Blender MCP target: **127.0.0.1:9876**
+
+See [`versions.env`](versions.env) and [`docs/verified-acceptance.md`](docs/verified-acceptance.md).
+
+## Architecture
 
 ```text
-┌───────────┐
-│  ChatGPT  │
-└─────┬─────┘
-      │ Personal plugin / custom MCP app
-      ▼
-┌─────────────────────────┐
-│ OpenAI Secure MCP Tunnel│
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────┐
-│  tunnel-client  │
-│    user's Mac   │
-└────────┬────────┘
-         │ localhost
-         ▼
-┌─────────────────┐
-│   Blender MCP   │
-│     add-on      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│     Blender     │
-└─────────────────┘
+ChatGPT
+  ↓ Personal plugin / custom MCP app
+OpenAI Secure MCP Tunnel
+  ↓
+tunnel-client on macOS
+  ↓ stdio MCP
+Blender MCP server
+  ↓ loopback JSON socket
+Blender MCP add-on on 127.0.0.1:9876
+  ↓
+running Blender
 ```
 
-The goal is not merely to document settings. The goal is to make the setup **reproducible, diagnosable, and testable**.
+The goal is not merely to document settings. The setup should be **reproducible, diagnosable, persistent, and testable**.
 
 ## Scope
 
-The initial supported target is **macOS**. Other operating systems should only be documented after they are genuinely tested.
+The currently verified target is **macOS**. Other operating systems should only be documented after they are genuinely tested.
 
 This repository intentionally does **not** contain:
 
@@ -53,28 +46,30 @@ This repository intentionally does **not** contain:
 
 ## Quick start
 
-The exact installation flow is still being hardened. The intended workflow is:
+1. Install Blender and Blender Lab MCP.
+2. Configure the Blender add-on on loopback (`127.0.0.1:9876`).
+3. Install `tunnel-client` and create/attach the tunnel using OpenAI's Secure MCP Tunnel setup flow.
+4. Copy `config/env.example` to `.env` and edit only your local values.
+5. Render `config/tunnel-client.yaml.example` with your private tunnel ID/key-file path and local MCP executable path.
+6. Install the sanitized LaunchAgent pattern from `config/launchd.plist.example` so the tunnel survives login/reboot and restarts after crashes.
+7. Start Blender and its MCP endpoint.
+8. Run `bash scripts/doctor.sh`.
+9. Run `bash scripts/acceptance-test.sh` to exercise the real local stdio MCP boundary.
+10. Run the final acceptance through `@Blender` in ChatGPT.
 
-1. Install Blender.
-2. Install and enable a compatible Blender MCP add-on.
-3. Install/configure `tunnel-client` through OpenAI Secure MCP Tunnel.
-4. Copy `config/env.example` to `.env` and set the local Blender MCP target.
-5. Start Blender and its MCP endpoint.
-6. Run `bash scripts/doctor.sh`.
-7. Run `bash scripts/acceptance-test.sh` for the locally testable portion.
-8. Perform the final acceptance test from ChatGPT through the real Blender plugin.
-
-See [`docs/installation.md`](docs/installation.md) before attempting setup.
+See [`docs/installation.md`](docs/installation.md) for the exact verified pattern and safety notes.
 
 ## Definition of working
 
-Configuration files existing is **not** success. A working installation must satisfy all of these:
+The verified setup satisfies all of these:
 
-- [ ] ChatGPT connects to the Blender plugin without a 502.
-- [ ] ChatGPT retrieves live scene information from the running Blender instance.
-- [ ] ChatGPT executes a harmless Blender Python operation through the plugin.
-- [ ] The returned state proves the response came from that running Blender instance.
-- [ ] The acceptance test leaves the scene unchanged.
+- [x] ChatGPT connects to the Blender plugin without a 502.
+- [x] ChatGPT retrieves live scene information from the running Blender instance.
+- [x] ChatGPT executes a harmless Blender Python operation through the plugin.
+- [x] The returned state proves the response came from that running Blender instance.
+- [x] The acceptance test leaves the scene unchanged.
+- [x] The tunnel runs under a user LaunchAgent with `RunAtLoad` and `KeepAlive`.
+- [x] Tunnel `/healthz` and `/readyz` return HTTP 200.
 
 ## Diagnostics
 
@@ -84,9 +79,11 @@ Run:
 bash scripts/doctor.sh
 ```
 
-The doctor is intentionally conservative. It checks local prerequisites and connectivity without printing secrets. A green local doctor does **not** replace the final ChatGPT-side acceptance test.
+The doctor checks the Blender process/listener, the configured tunnel process/profile, the user LaunchAgent where configured, and tunnel health/readiness. It also warns when multiple matching tunnel clients are running, which is useful for detecting a stale competing runtime.
 
-## Local acceptance test
+A green doctor still does not replace the final ChatGPT-side test.
+
+## Local MCP acceptance
 
 Run:
 
@@ -94,11 +91,11 @@ Run:
 bash scripts/acceptance-test.sh
 ```
 
-This checks the local Blender MCP boundary that can be safely validated from the machine. The final ChatGPT → tunnel → Blender proof must still be executed from ChatGPT itself.
+Unlike the original TCP-only gate, this launches the configured Blender MCP stdio server, performs MCP initialization/tool discovery, and executes the read-only `get_blendfile_summary_datablocks` tool against the running Blender instance.
 
 ## Configuration
 
-Copy the local target example instead of editing tracked files with machine-specific values:
+Copy the local target example:
 
 ```bash
 cp config/env.example .env
@@ -106,7 +103,12 @@ cp config/env.example .env
 
 `.env` is ignored by Git.
 
-A runnable tunnel-client YAML is **not published yet**. The current schema/version will be added only after Issue #1 is fixed and the configuration is proven end to end. See [`config/README.md`](config/README.md).
+The repository also includes:
+
+- [`config/tunnel-client.yaml.example`](config/tunnel-client.yaml.example) — sanitized structure from the verified tunnel profile.
+- [`config/launchd.plist.example`](config/launchd.plist.example) — sanitized user LaunchAgent pattern from the verified persistent service.
+
+The placeholders are intentionally not valid secrets. Replace them locally and never commit the rendered private files.
 
 ## Security
 
@@ -116,11 +118,7 @@ If you accidentally expose a credential, rotate/revoke it first, then clean up t
 
 ## Troubleshooting
 
-See [`docs/troubleshooting.md`](docs/troubleshooting.md). The current 502 regression is tracked in [Issue #1](https://github.com/kapunakap/chatgpt-blender-bridge/issues/1), and its eventual root cause will be turned into a doctor check and regression note where practical.
-
-## Project maturity
-
-The first milestone is **v0.1 — reproducible macOS setup**. It should not be tagged until a real ChatGPT-side acceptance test succeeds end to end.
+See [`docs/troubleshooting.md`](docs/troubleshooting.md). The first 502 regression and its stale-runtime signature are documented there as a regression case.
 
 ## License
 

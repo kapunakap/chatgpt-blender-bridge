@@ -1,0 +1,26 @@
+# Sanitized structure from the profile proven end to end on 2026-09-06.
+# Replace every __PLACEHOLDER__ locally before use. Do not commit the rendered file.
+
+config_version: 1
+
+admin_ui:
+  open_browser: false
+
+control_plane:
+  base_url: "https://api.openai.com"
+  tunnel_id: "__TUNNEL_ID__"
+  api_key: "file:__RUNTIME_KEY_FILE__"
+
+health:
+  listen_addr: "127.0.0.1:0"
+  url_file: "__HEALTH_URL_FILE__"
+
+log:
+  file: "__LOG_FILE__"
+  format: "json"
+  level: "info"
+
+mcp:
+  commands:
+    - channel: "main"
+      command: "/usr/bin/env BLENDER_MCP_HOST=127.0.0.1 BLENDER_MCP_PORT=9876 __BLENDER_MCP_COMMAND__ --transport stdio"

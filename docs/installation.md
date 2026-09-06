@@ -1,108 +1,171 @@
 # Installation
 
-> **Status:** this installation guide is being hardened against the live end-to-end regression in Issue #1. Steps that depend on the final verified tunnel/client invocation are intentionally conservative rather than speculative.
+This guide documents the macOS pattern proven end to end on 2026-09-06.
 
-## Requirements
+## Verified versions
 
-- macOS for the initial supported path,
-- Blender,
-- a compatible Blender MCP add-on/server,
-- OpenAI Secure MCP Tunnel access,
-- `tunnel-client`,
-- a ChatGPT plugin/custom MCP app configured for the tunnel.
+- Blender `5.2.1 LTS`
+- Blender Lab MCP `v1.0.0`
+- tunnel-client `0.0.13+4b5267f823be0b046bb883aacb51603cfde3a0ea`
 
-OpenAI reference for local MCP connectivity through Secure MCP Tunnel:
-https://help.openai.com/en/articles/12584461
+The examples are sanitized. They intentionally do not contain a real tunnel ID, runtime key, private endpoint, auth code, or machine-specific path.
 
 ## 1. Install Blender
 
 Install Blender from its official distribution channel and start it once.
 
-Record the tested Blender version in `versions.env` when validating a release of this repository.
+## 2. Install Blender Lab MCP
 
-## 2. Install the Blender MCP add-on
+Install the upstream Blender Lab MCP add-on/server. The verified setup used the add-on on:
 
-Install the MCP add-on from its upstream project rather than copying an unknown local add-on into this repository.
+```text
+127.0.0.1:9876
+```
 
-After installation:
+Keep the add-on bound to loopback. Do not expose the Blender MCP socket publicly.
 
-1. enable the add-on,
-2. start its MCP server,
-3. keep it bound to loopback/local access unless the upstream project explicitly requires something else,
-4. note its local host and port.
+The verified v1.0.0 MCP server executable was launched with:
 
-The default example configuration in this repository uses `127.0.0.1:9876`, but treat that as a configurable example, not a universal Blender MCP standard.
+```text
+blender-mcp --transport stdio
+```
 
-## 3. Prepare local configuration
+and received `BLENDER_MCP_HOST=127.0.0.1` plus `BLENDER_MCP_PORT=9876` in its environment.
+
+## 3. Prepare local script configuration
 
 ```bash
 cp config/env.example .env
 ```
 
-Edit `.env` locally. It is ignored by Git.
+Edit `.env` locally if your MCP installation path, port, LaunchAgent label, or health URL file differs. `.env` is ignored by Git.
 
-A runnable tunnel-client YAML is intentionally deferred until Issue #1 proves the current schema and command line end to end. See `config/README.md`.
+## 4. Create/attach the Secure MCP Tunnel
 
-Never place real credentials in tracked example files.
+Use OpenAI's Secure MCP Tunnel setup flow for your account/workspace. This repository does not create or publish your credentials.
 
-## 4. Configure Secure MCP Tunnel / tunnel-client
+After the setup flow gives you a tunnel identity and runtime credential, keep the runtime key in a local file with restrictive permissions:
 
-Configure `tunnel-client` so the tunnel targets the Blender MCP endpoint on loopback.
-
-The exact credential and client bootstrap flow is deliberately not duplicated here until it is verified against the current tunnel-client release. Follow the OpenAI-provided Secure MCP Tunnel setup flow available to your ChatGPT account/workspace, then map its local target to the values in `.env`.
-
-Expected logical mapping:
-
-```text
-remote tunnel endpoint
-        ↓
-tunnel-client
-        ↓
-127.0.0.1:${BLENDER_MCP_PORT}
+```bash
+chmod 600 /path/to/blender-mcp-runtime-key
 ```
 
-Do not expose Blender MCP directly on a public interface merely to make ChatGPT reach it.
+Never paste the key or real tunnel ID into this public repository.
 
-## 5. Start Blender MCP
+## 5. Render the tunnel-client profile
 
-Start Blender and ensure the MCP endpoint is running.
+Start from:
 
-Then run:
+```text
+config/tunnel-client.yaml.example
+```
+
+Replace these tokens locally:
+
+- `__TUNNEL_ID__`
+- `__RUNTIME_KEY_FILE__`
+- `__HEALTH_URL_FILE__`
+- `__LOG_FILE__`
+- `__BLENDER_MCP_COMMAND__`
+
+A normal durable destination is:
+
+```text
+~/.config/tunnel-client/blender-mcp.yaml
+```
+
+Set the private rendered profile to mode `0600`.
+
+Before creating a background service, validate the profile using the tunnel-client doctor/status commands available in your installed version, then start it once and confirm both health endpoints are good.
+
+## 6. Install the persistent user LaunchAgent
+
+The 502 repair was made durable by running the Blender tunnel as a macOS user LaunchAgent with `RunAtLoad=true` and `KeepAlive=true`.
+
+Start from:
+
+```text
+config/launchd.plist.example
+```
+
+Replace:
+
+- `__HOME__`
+- `__PROFILE_DIR__`
+- `__LAUNCHD_LOG_DIR__`
+
+The profile directory should contain `blender-mcp.yaml` and the LaunchAgent passes `--profile blender-mcp`.
+
+Validate the rendered plist before installing it:
+
+```bash
+plutil -lint /path/to/rendered.plist
+```
+
+Install it:
+
+```bash
+mkdir -p "$HOME/Library/LaunchAgents"
+install -m 600 /path/to/rendered.plist \
+  "$HOME/Library/LaunchAgents/com.example.chatgpt-blender-bridge.plist"
+```
+
+Load it for the logged-in user:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/com.example.chatgpt-blender-bridge.plist"
+```
+
+If it is already loaded and you intentionally changed its config, use a controlled restart rather than starting a second unmanaged copy.
+
+Verify:
+
+```bash
+launchctl print "gui/$(id -u)/com.example.chatgpt-blender-bridge"
+```
+
+The verified service reported `state = running`, `keepalive`, and `runatload`.
+
+## 7. Verify tunnel health/readiness
+
+The tunnel profile writes a local health base URL to its configured health URL file. Read that file locally, then verify:
+
+```bash
+curl -fsS "${HEALTH_BASE}/healthz"
+curl -fsS "${HEALTH_BASE}/readyz"
+```
+
+The verified result was HTTP 200 with bodies `live` and `ready`.
+
+## 8. Run local diagnostics
 
 ```bash
 bash scripts/doctor.sh
 ```
 
-The local MCP port should pass before debugging the cloud/tunnel side.
+The doctor checks the Blender listener, matching tunnel processes, LaunchAgent state when configured, and tunnel health/readiness.
 
-## 6. Start the tunnel client
-
-Start `tunnel-client` using the credentials/configuration produced by the Secure MCP Tunnel setup flow.
-
-If you install it as a background service, prefer a user-level service with explicit logs and least privilege. A sanitized launchd template will be added only after the currently working command line is re-verified.
-
-## 7. Local smoke test
-
-Run:
+## 9. Exercise the real local MCP boundary
 
 ```bash
 bash scripts/acceptance-test.sh
 ```
 
-This verifies only the locally testable boundary. It intentionally does not claim to prove the ChatGPT cloud path.
+This does more than test TCP. It launches the configured Blender MCP stdio server, performs MCP initialization/tool discovery, and executes the read-only `get_blendfile_summary_datablocks` tool against the running Blender instance.
 
-## 8. Final ChatGPT acceptance
+## 10. Final ChatGPT acceptance
 
-From a normal ChatGPT chat with the Blender plugin enabled, prove all of the following:
+From a normal ChatGPT chat with the Blender Personal plugin enabled, prove:
 
-1. the plugin connects without a 502,
-2. a live scene read succeeds,
-3. a harmless Blender Python operation succeeds,
-4. the result proves it came from the currently running Blender instance,
-5. the test cleans up after itself and leaves the scene unchanged.
+1. `@Blender` connects without a 502.
+2. A live scene read succeeds.
+3. A harmless `execute_blender_code` call succeeds.
+4. The result reports the same Blender version/running instance observed locally.
+5. Object count/scene state remains unchanged.
 
-Only this final step makes the end-to-end setup `PASS`.
+The verified 2026-09-06 run passed all five. See [`verified-acceptance.md`](verified-acceptance.md).
 
-## Updating this guide
+## Avoid the first regression
 
-When Issue #1 is resolved, replace provisional wording with the exact verified commands, upstream version pins, sanitized tunnel example, and acceptance evidence used in the successful run.
+Do not leave the Blender tunnel as a one-off unmanaged terminal process. A long-lived stale stdio/tunnel-client process was the failing boundary in the first 502 incident. Use the persistent user service, check `/healthz` and `/readyz`, and avoid accidental competing copies of the same Blender tunnel profile.
