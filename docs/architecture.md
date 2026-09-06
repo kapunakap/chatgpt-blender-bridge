@@ -69,3 +69,20 @@ The preferred harmless proof is:
 ## Current known regression
 
 The first tracked end-to-end failure is Issue #1: ChatGPT receives a 502 when invoking the Blender plugin. The root cause is intentionally not guessed in this document; once verified, it should be added to `docs/troubleshooting.md` and, where possible, detected by `scripts/doctor.sh`.
+
+## Isolated multi-worker control plane
+
+Issue #4 adds a separate local worker-manager path for concurrent modelling, export, render, and validation jobs:
+
+```text
+worker manager / router
+  ├─ 127.0.0.1:9970 -> persistent Blender worker
+  ├─ 127.0.0.1:9971 -> persistent Blender worker
+  └─ 127.0.0.1:9972 -> persistent Blender worker
+```
+
+This control plane is intentionally separate from the verified single-user Blender Lab MCP endpoint on `127.0.0.1:9876`. Managed worker ports are loopback-only and authenticated with per-worker random tokens kept in the private runtime directory.
+
+Jobs route explicitly by worker ID. Each job opens a private working copy and writes a separate `result.blend`. Publishing a result back to a mutable source requires an OS-level exclusive source lock, so two workers cannot concurrently write the same canonical `.blend` file.
+
+See [`multi-worker.md`](multi-worker.md) for lifecycle, routing, file isolation, health/restart behavior, and the real-Blender acceptance gate.
