@@ -37,12 +37,13 @@ The default example configuration in this repository uses `127.0.0.1:9876`, but 
 
 ```bash
 cp config/env.example .env
-cp config/tunnel-client.yaml.example config/tunnel-client.local.yaml
 ```
 
-Edit only the ignored local files.
+Edit `.env` locally. It is ignored by Git.
 
-Never place real credentials in the tracked example files.
+A runnable tunnel-client YAML is intentionally deferred until Issue #1 proves the current schema and command line end to end. See `config/README.md`.
+
+Never place real credentials in tracked example files.
 
 ## 4. Configure Secure MCP Tunnel / tunnel-client
 
@@ -69,7 +70,7 @@ Start Blender and ensure the MCP endpoint is running.
 Then run:
 
 ```bash
-./scripts/doctor.sh
+bash scripts/doctor.sh
 ```
 
 The local MCP port should pass before debugging the cloud/tunnel side.
@@ -85,7 +86,7 @@ If you install it as a background service, prefer a user-level service with expl
 Run:
 
 ```bash
-./scripts/acceptance-test.sh
+bash scripts/acceptance-test.sh
 ```
 
 This verifies only the locally testable boundary. It intentionally does not claim to prove the ChatGPT cloud path.
@@ -104,4 +105,4 @@ Only this final step makes the end-to-end setup `PASS`.
 
 ## Updating this guide
 
-When Issue #1 is resolved, replace any provisional wording with the exact verified commands, upstream version pins, and sanitized examples used in the successful acceptance run.
+When Issue #1 is resolved, replace provisional wording with the exact verified commands, upstream version pins, sanitized tunnel example, and acceptance evidence used in the successful run.
