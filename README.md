@@ -107,6 +107,29 @@ For tunnel integration, point the local MCP command at the router wrapper instea
 
 See [`docs/multi-worker.md`](docs/multi-worker.md) and [`config/tunnel-client-multi-worker.yaml.example`](config/tunnel-client-multi-worker.yaml.example).
 
+## Automatic project-aware routing
+
+The multi-worker wrapper also supports persistent project/worktree affinity while keeping a single ChatGPT-facing Blender integration. A new stdio session still receives an isolated free worker automatically; once trustworthy project metadata is known, the agent calls `project_attach` and the bridge keeps that logical project on the same healthy Blender worker across later sessions.
+
+```text
+Kapelica thread --project_attach--> Blender A
+Raša thread     --project_attach--> Blender B
+Plomin thread   --project_attach--> Blender C
+```
+
+No normal caller needs to choose `worker-1`, `worker-2`, `9970`, or `9971`. A busy project affinity fails closed, while a dead affinity can safely recover to the current isolated worker. Relative `.blend` paths are canonicalized underneath their Git worktree so identical repository-relative paths in different worktrees remain physically separate.
+
+For three interactive GUI workers:
+
+```bash
+python3 scripts/blender-workers.py start --count 3 --gui-count 3 --base-port 9970
+python3 scripts/project-routing-acceptance.py
+```
+
+The wrapper exposes `project_attach`, `project_status`, and `project_detach` alongside the native Blender MCP tools. Startup metadata can also be supplied by CLI/environment when the tunnel boundary already knows the project.
+
+See [`docs/project-routing.md`](docs/project-routing.md) for routing rules, recovery behavior, configuration, safety notes, and the real-Blender acceptance procedure.
+
 ## Configuration
 
 Copy the local target example:
