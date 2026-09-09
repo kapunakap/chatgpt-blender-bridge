@@ -90,7 +90,7 @@ def main() -> int:
     parser.add_argument("--keep-runtime", action="store_true")
     args = parser.parse_args()
 
-    runtime = Path(tempfile.mkdtemp(prefix="chatgpt-blender-autoscale-")).resolve()
+    runtime = Path(tempfile.mkdtemp(prefix="chatgpt-blender-autoscale-", dir="/tmp")).resolve()
     socket_path = runtime / "supervisor.sock"
     env = os.environ.copy()
     env.update(
