@@ -119,6 +119,7 @@ class WorkerMcpProxy:
 
         self._acquire(worker_id)
         if startup_metadata:
+            previous_route = self.router.get(startup_metadata)
             route = self.router.resolve(
                 startup_metadata,
                 current_worker=self.worker_id,
@@ -128,7 +129,15 @@ class WorkerMcpProxy:
             target = str(route["worker"])
             if target != self.worker_id:
                 self._release()
-                self._acquire(target)
+                try:
+                    self._acquire(target)
+                except Exception:
+                    self.router.restore_if_current(
+                        startup_metadata,
+                        expected_route=route,
+                        previous_route=previous_route,
+                    )
+                    raise
             self.current_project = route
         self._start_child()
         if startup_metadata and startup_open_blend:
@@ -278,6 +287,7 @@ class WorkerMcpProxy:
 
     def attach_project(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         metadata = normalize_project_metadata(arguments)
+        previous_route = self.router.get(metadata)
         route = self.router.resolve(
             metadata,
             current_worker=self.worker_id,
@@ -286,7 +296,15 @@ class WorkerMcpProxy:
         )
         target = str(route["worker"])
         if target != self.worker_id:
-            self._rebind(target)
+            try:
+                self._rebind(target)
+            except Exception:
+                self.router.restore_if_current(
+                    metadata,
+                    expected_route=route,
+                    previous_route=previous_route,
+                )
+                raise
         self.current_project = route
         opened = None
         if bool(arguments.get("open_blend", False)):

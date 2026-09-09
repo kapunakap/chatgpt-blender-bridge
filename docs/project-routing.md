@@ -75,7 +75,7 @@ project_attach(
 )
 ```
 
-`blend_path` is optional. A relative `blend_path` is only accepted when `worktree` is present, and is canonicalized underneath that worktree. That means two Git worktrees may use the same repository-relative path without becoming the same physical source file.
+`blend_path` is optional. A relative `blend_path` is only accepted when `worktree` is present, and is canonicalized underneath that worktree. Traversal (including an existing symlink that resolves outside the worktree) is rejected. That means two Git worktrees may use the same repository-relative path without becoming the same physical source file.
 
 `open_blend=true` is optional and explicitly opens the resolved file after routing. It is false by default so attaching metadata alone does not mutate Blender file state.
 
@@ -99,11 +99,12 @@ with a separate lock file. The runtime remains local-only and should stay user-p
 
 Routing behavior is fail-closed:
 
-- First attachment binds the project's affinity to the session's already-leased worker.
+- First attachment keeps the session's already-leased worker only when that worker is not reserved by another project affinity. Otherwise the router selects another healthy, free, unclaimed worker and transparently rebinds.
+- A healthy worker already claimed by one project is never silently claimed by a second project. If the pool has no safe unclaimed capacity, attachment fails explicitly instead of sharing Blender state.
 - A later session for the same project reuses the existing worker when that worker is healthy and free.
 - If that project's worker is currently busy, the second session receives an explicit project-busy tool error instead of being silently routed to a different Blender state.
-- If the recorded worker is missing or unhealthy, the affinity safely recovers to the current healthy isolated worker and records the old worker ID as recovery metadata.
-- If a live rebind races with another session and the target lease cannot be acquired, the proxy rolls back to its previous worker where possible instead of continuing on an ambiguous target.
+- If the recorded worker is missing or unhealthy, recovery chooses only a healthy worker that is not claimed by another project. If no such worker exists, the router fails closed; the worker manager may instead restart the project's original worker on its existing endpoint.
+- If a live rebind races with another session and the target lease cannot be acquired, the proxy rolls the newly written affinity back when it is still the current route, then restores its previous worker where possible.
 
 ## Startup metadata
 
@@ -163,15 +164,16 @@ python3 scripts/project-routing-acceptance.py
 
 It proves:
 
-- three real GUI Blender worker processes,
+- three real GUI Blender worker processes with distinct PIDs and loopback endpoints,
 - three concurrent sessions through the same wrapper,
 - automatic distinct-worker allocation,
 - `project_attach` / `project_status` availability,
 - repeated calls stay on the same Blender PID,
-- project scene markers do not leak between sessions,
-- identical repository-relative `.blend` paths in separate worktrees canonicalize to separate physical paths,
+- scene marker, selection, and actual Blender mode state do not leak between projects,
+- identical repository-relative `.blend` paths are saved as three distinct physical Blender files in separate worktrees,
 - a later session reuses the project's worker affinity,
-- a dead project worker safely recovers without changing unrelated worker PIDs.
+- a second session is rejected while that project's worker is actively leased,
+- a killed project worker is restarted/recovered while an unrelated MCP session remains live and keeps the same PID/state.
 
 Then rerun the original multi-worker gate:
 

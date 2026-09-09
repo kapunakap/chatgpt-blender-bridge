@@ -51,17 +51,25 @@ def normalize_project_metadata(raw: Mapping[str, Any]) -> dict[str, str]:
             metadata[key] = text
 
     worktree = metadata.get("worktree")
+    worktree_root: Path | None = None
     if worktree:
-        metadata["worktree"] = str(Path(worktree).expanduser().resolve(strict=False))
+        worktree_root = Path(worktree).expanduser().resolve(strict=False)
+        metadata["worktree"] = str(worktree_root)
 
     blend_path = metadata.get("blend_path")
     if blend_path:
         path = Path(blend_path).expanduser()
         if not path.is_absolute():
-            if not metadata.get("worktree"):
+            if worktree_root is None:
                 raise ProjectRoutingError("relative blend_path requires worktree")
-            path = Path(metadata["worktree"]) / path
-        metadata["blend_path"] = str(path.resolve(strict=False))
+            path = (worktree_root / path).resolve(strict=False)
+            try:
+                path.relative_to(worktree_root)
+            except ValueError as exc:
+                raise ProjectRoutingError("relative blend_path must stay underneath worktree") from exc
+        else:
+            path = path.resolve(strict=False)
+        metadata["blend_path"] = str(path)
 
     if not any(metadata.get(key) for key in ("worktree", "repo", "project")):
         raise ProjectRoutingError("project metadata requires worktree, repo, or project")
@@ -128,6 +136,48 @@ class ProjectRouter:
     def _status_by_id(statuses: Iterable[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
         return {str(item.get("id")): item for item in statuses if item.get("id")}
 
+    @staticmethod
+    def _claims_by_worker(projects: Mapping[str, Any]) -> dict[str, set[str]]:
+        claims: dict[str, set[str]] = {}
+        for key, route in projects.items():
+            if not isinstance(route, Mapping):
+                continue
+            worker = str(route.get("worker") or "")
+            if worker:
+                claims.setdefault(worker, set()).add(str(key))
+        return claims
+
+    @staticmethod
+    def _other_claims(claims: Mapping[str, set[str]], worker: str, key: str) -> list[str]:
+        return sorted(item for item in claims.get(worker, set()) if item != key)
+
+    def _select_unclaimed_worker(
+        self,
+        *,
+        key: str,
+        current_worker: str,
+        status_by_id: Mapping[str, Mapping[str, Any]],
+        claims: Mapping[str, set[str]],
+    ) -> str:
+        current_status = status_by_id.get(current_worker)
+        if (
+            current_status
+            and bool(current_status.get("healthy"))
+            and not self._other_claims(claims, current_worker, key)
+        ):
+            return current_worker
+
+        for worker_id, status in sorted(status_by_id.items()):
+            if worker_id == current_worker:
+                continue
+            if not bool(status.get("healthy")) or bool(status.get("busy")):
+                continue
+            if self._other_claims(claims, worker_id, key):
+                continue
+            return worker_id
+
+        raise ProjectBusyError(f"project {key} has no unclaimed healthy worker available")
+
     def resolve(
         self,
         raw_metadata: Mapping[str, Any],
@@ -144,10 +194,17 @@ class ProjectRouter:
         with self._locked_state() as state:
             projects = state["projects"]
             existing = projects.get(key)
+            claims = self._claims_by_worker(projects)
             if not isinstance(existing, dict):
+                target_worker = self._select_unclaimed_worker(
+                    key=key,
+                    current_worker=current_worker,
+                    status_by_id=status_by_id,
+                    claims=claims,
+                )
                 route = {
                     "key": key,
-                    "worker": current_worker,
+                    "worker": target_worker,
                     "metadata": metadata,
                     "updated_at": now,
                 }
@@ -157,15 +214,19 @@ class ProjectRouter:
                 return json.loads(json.dumps(route))
 
             target_worker = str(existing.get("worker") or "")
-            if target_worker == current_worker:
-                existing["metadata"] = metadata
-                existing["updated_at"] = now
-                if session_id:
-                    existing["last_session"] = session_id
-                return json.loads(json.dumps(existing))
-
             target_status = status_by_id.get(target_worker)
             if target_status and bool(target_status.get("healthy")):
+                other_claims = self._other_claims(claims, target_worker, key)
+                if other_claims:
+                    raise ProjectBusyError(
+                        f"project {key} worker {target_worker} is also claimed by {', '.join(other_claims)}"
+                    )
+                if target_worker == current_worker:
+                    existing["metadata"] = metadata
+                    existing["updated_at"] = now
+                    if session_id:
+                        existing["last_session"] = session_id
+                    return json.loads(json.dumps(existing))
                 if bool(target_status.get("busy")):
                     raise ProjectBusyError(
                         f"project {key} is already attached to busy worker {target_worker}"
@@ -176,9 +237,15 @@ class ProjectRouter:
                     existing["last_session"] = session_id
                 return json.loads(json.dumps(existing))
 
+            replacement_worker = self._select_unclaimed_worker(
+                key=key,
+                current_worker=current_worker,
+                status_by_id=status_by_id,
+                claims=claims,
+            )
             replacement = {
                 "key": key,
-                "worker": current_worker,
+                "worker": replacement_worker,
                 "metadata": metadata,
                 "updated_at": now,
                 "recovered_from_worker": target_worker or None,
@@ -187,6 +254,28 @@ class ProjectRouter:
                 replacement["last_session"] = session_id
             projects[key] = replacement
             return json.loads(json.dumps(replacement))
+
+    def restore_if_current(
+        self,
+        raw_metadata: Mapping[str, Any],
+        *,
+        expected_route: Mapping[str, Any],
+        previous_route: Mapping[str, Any] | None,
+    ) -> bool:
+        metadata = normalize_project_metadata(raw_metadata)
+        key = project_key(metadata)
+        expected = json.loads(json.dumps(expected_route))
+        previous = json.loads(json.dumps(previous_route)) if previous_route is not None else None
+        with self._locked_state() as state:
+            projects = state["projects"]
+            current = projects.get(key)
+            if not isinstance(current, dict) or current != expected:
+                return False
+            if previous is None:
+                projects.pop(key, None)
+            else:
+                projects[key] = previous
+            return True
 
     def get(self, raw_metadata: Mapping[str, Any]) -> dict[str, Any] | None:
         metadata = normalize_project_metadata(raw_metadata)

@@ -117,7 +117,7 @@ Raša thread     --project_attach--> Blender B
 Plomin thread   --project_attach--> Blender C
 ```
 
-No normal caller needs to choose `worker-1`, `worker-2`, `9970`, or `9971`. A busy project affinity fails closed, while a dead affinity can safely recover to the current isolated worker. Relative `.blend` paths are canonicalized underneath their Git worktree so identical repository-relative paths in different worktrees remain physically separate.
+No normal caller needs to choose `worker-1`, `worker-2`, `9970`, or `9971`. A busy project affinity fails closed, and healthy workers already reserved by another project are not silently reused for a different project. Dead affinity recovery uses only safe unclaimed capacity (or the original worker can be restarted), and relative `.blend` paths are contained underneath their Git worktree so identical repository-relative paths in different worktrees remain physically separate.
 
 For three interactive GUI workers:
 
