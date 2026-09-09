@@ -518,9 +518,17 @@ def main() -> int:
                 path = Path(str(item["blend_path"]))
                 assert path.is_file()
                 assert path.stat().st_size == int(item["physical_size"])
-                assert path.read_bytes()[:7] == b"BLENDER"
+                with path.open("rb") as handle:
+                    magic = handle.read(7)
+                assert (
+                    magic.startswith(b"BLENDER")
+                    or magic.startswith(b"\x1f\x8b")
+                    or magic.startswith(b"\x28\xb5\x2f\xfd")
+                )
                 assert str(path.resolve()) == str(item["blend_file"])
-                physical_files.append({"path": str(path.resolve()), "size": path.stat().st_size})
+                physical_files.append(
+                    {"path": str(path.resolve()), "size": path.stat().st_size, "magic": magic.hex()}
+                )
             report["parallel_project_sessions"] = first_round
             report["relative_blend_paths_isolated"] = True
             report["physical_blend_files"] = physical_files
