@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- User-session supervisor for Issue #9. Replace every placeholder locally. -->
+  <!-- This LaunchAgent, not tunnel-client, owns managed Blender processes. -->
+  <key>Label</key>
+  <string>com.example.chatgpt-blender-worker-supervisor</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON_BIN__</string>
+    <string>__BRIDGE_DIR__/scripts/blender-worker-supervisor.py</string>
+    <string>--runtime</string>
+    <string>__WORKER_RUNTIME__</string>
+    <string>run</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__BRIDGE_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>BLENDER_BIN</key>
+    <string>__BLENDER_BIN__</string>
+    <key>BLENDER_MCP_COMMAND</key>
+    <string>__BLENDER_MCP_COMMAND__</string>
+    <key>CHATGPT_BLENDER_WORKER_RUNTIME</key>
+    <string>__WORKER_RUNTIME__</string>
+    <key>BLENDER_WORKER_MIN_COUNT</key>
+    <string>1</string>
+    <key>BLENDER_WORKER_MAX_COUNT</key>
+    <string>5</string>
+    <key>BLENDER_WORKER_GUI_COUNT</key>
+    <string>5</string>
+    <key>BLENDER_WORKER_BASE_PORT</key>
+    <string>9970</string>
+    <key>BLENDER_WORKER_IDLE_TIMEOUT_SECONDS</key>
+    <string>1200</string>
+    <key>BLENDER_WORKER_GC_INTERVAL_SECONDS</key>
+    <string>300</string>
+    <key>BLENDER_JOB_RETENTION_SECONDS</key>
+    <string>86400</string>
+    <key>BLENDER_LOG_RETENTION_SECONDS</key>
+    <string>604800</string>
+    <key>BLENDER_PROJECT_AFFINITY_STALE_SECONDS</key>
+    <string>86400</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>Umask</key>
+  <integer>63</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LAUNCHD_LOG_DIR__/blender-worker-supervisor.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LAUNCHD_LOG_DIR__/blender-worker-supervisor.stderr.log</string>
+</dict>
+</plist>
