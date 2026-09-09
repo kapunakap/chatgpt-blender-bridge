@@ -39,15 +39,15 @@ python3 scripts/blender-workers.py status
 
 The existing single-user endpoint on `127.0.0.1:9876` remains reserved and separate.
 
-For tunnel integration, keep using one command with automatic worker selection:
+On macOS, start the GUI worker pool from an interactive GUI login session before starting the Secure MCP Tunnel. Then keep the tunnel command focused on automatic worker selection:
 
 ```bash
 python3 scripts/blender-worker-mcp.py \
-  --ensure-count 3 \
-  --gui-count 3 \
   --base-port 9970 \
   --worker auto
 ```
+
+Do not use `--ensure-count` from the tunnel-hosted process on macOS. Blender 5.2 can abort during AppKit application registration or Metal initialization when `tunnel-client` is the responsible process. `--ensure-count` remains valid in environments where the parent process is verified to be allowed to launch Blender.
 
 ## Session behavior
 
@@ -156,7 +156,7 @@ This makes detach safe for diagnostics without making future sessions lose the p
 
 ## Real acceptance
 
-Run the Issue #7 gate on a machine with the verified Blender Lab MCP stack:
+Run the Issue #7 gate on a machine with the verified Blender Lab MCP stack. On macOS, run it from an interactive GUI login session (not from the tunnel-hosted process):
 
 ```bash
 python3 scripts/project-routing-acceptance.py

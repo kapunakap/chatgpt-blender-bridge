@@ -85,7 +85,7 @@ Pin the session to one worker:
 python3 scripts/blender-worker-mcp.py --worker worker-2
 ```
 
-The wrapper can also ensure the pool exists before accepting the stdio session:
+The wrapper can also ensure the pool exists before accepting the stdio session **when its parent process is allowed to launch Blender**:
 
 ```bash
 python3 scripts/blender-worker-mcp.py \
@@ -93,6 +93,8 @@ python3 scripts/blender-worker-mcp.py \
   --base-port 9970 \
   --worker auto
 ```
+
+On macOS, do not use `--ensure-count` from the Secure MCP Tunnel / `tunnel-client` process. Blender 5.2 can abort during AppKit application registration or Metal initialization when launched from that process coalition. Start or reuse the pool from an interactive GUI login session first, then configure the tunnel wrapper without `--ensure-count`; the tunnel should only lease and route already-running workers.
 
 Two concurrent `auto` stdio sessions cannot acquire the same worker lease. A direct manager job uses the same lease mechanism, so automation jobs and ChatGPT sessions also cannot mutate one Blender process concurrently.
 

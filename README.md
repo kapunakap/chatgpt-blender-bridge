@@ -103,7 +103,7 @@ python3 scripts/blender-workers.py status
 python3 scripts/multi-worker-acceptance.py
 ```
 
-For tunnel integration, point the local MCP command at the router wrapper instead of directly at `blender-mcp`. The wrapper can `--ensure-count 3` and route each session with `--worker auto`. The original interactive endpoint on `127.0.0.1:9876` remains unchanged.
+For tunnel integration, point the local MCP command at the router wrapper instead of directly at `blender-mcp`. On macOS, start or reuse the Blender worker pool from an interactive GUI login session first, then let the tunnel wrapper only lease and route workers with `--worker auto`. Do not launch GUI workers with `--ensure-count` from the tunnel process itself: Blender 5.2 can abort during AppKit/Metal initialization when `tunnel-client` is the responsible process. The original interactive endpoint on `127.0.0.1:9876` remains unchanged.
 
 See [`docs/multi-worker.md`](docs/multi-worker.md) and [`config/tunnel-client-multi-worker.yaml.example`](config/tunnel-client-multi-worker.yaml.example).
 
