@@ -103,9 +103,32 @@ python3 scripts/blender-workers.py status
 python3 scripts/multi-worker-acceptance.py
 ```
 
-For tunnel integration, point the local MCP command at the router wrapper instead of directly at `blender-mcp`. The wrapper can `--ensure-count 3` and route each session with `--worker auto`. The original interactive endpoint on `127.0.0.1:9876` remains unchanged.
+For tunnel integration, point the local MCP command at the router wrapper instead of directly at `blender-mcp`. On macOS, start or reuse the Blender worker pool from an interactive GUI login session first, then let the tunnel wrapper only lease and route workers with `--worker auto`. Do not launch GUI workers with `--ensure-count` from the tunnel process itself: Blender 5.2 can abort during AppKit/Metal initialization when `tunnel-client` is the responsible process. The original interactive endpoint on `127.0.0.1:9876` remains unchanged.
 
 See [`docs/multi-worker.md`](docs/multi-worker.md) and [`config/tunnel-client-multi-worker.yaml.example`](config/tunnel-client-multi-worker.yaml.example).
+
+## Automatic project-aware routing
+
+The multi-worker wrapper also supports persistent project/worktree affinity while keeping a single ChatGPT-facing Blender integration. A new stdio session still receives an isolated free worker automatically; once trustworthy project metadata is known, the agent calls `project_attach` and the bridge keeps that logical project on the same healthy Blender worker across later sessions.
+
+```text
+Kapelica thread --project_attach--> Blender A
+Raša thread     --project_attach--> Blender B
+Plomin thread   --project_attach--> Blender C
+```
+
+No normal caller needs to choose `worker-1`, `worker-2`, `9970`, or `9971`. A busy project affinity fails closed, and healthy workers already reserved by another project are not silently reused for a different project. Dead affinity recovery uses only safe unclaimed capacity (or the original worker can be restarted), and relative `.blend` paths are contained underneath their Git worktree so identical repository-relative paths in different worktrees remain physically separate.
+
+For three interactive GUI workers:
+
+```bash
+python3 scripts/blender-workers.py start --count 3 --gui-count 3 --base-port 9970
+python3 scripts/project-routing-acceptance.py
+```
+
+The wrapper exposes `project_attach`, `project_status`, and `project_detach` alongside the native Blender MCP tools. Startup metadata can also be supplied by CLI/environment when the tunnel boundary already knows the project.
+
+See [`docs/project-routing.md`](docs/project-routing.md) for routing rules, recovery behavior, configuration, safety notes, and the real-Blender acceptance procedure.
 
 ## Configuration
 
