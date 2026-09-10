@@ -22,7 +22,8 @@ log:
 
 mcp:
   commands:
-    # On macOS, pre-start the Blender worker pool from an interactive GUI login session.
-    # Do not use --ensure-count here: tunnel-client may not be allowed to launch Blender GUI processes.
+    # Issue #9: a user-session LaunchAgent owns managed Blender lifecycle.
+    # tunnel-client only requests supervisor capacity and takes an existing lease.
+    # Never add --ensure-count here on macOS.
     - channel: "main"
-      command: "/usr/bin/env CHATGPT_BLENDER_WORKER_RUNTIME=__WORKER_RUNTIME__ BLENDER_BIN=__BLENDER_BIN__ BLENDER_MCP_COMMAND=__BLENDER_MCP_COMMAND__ __BLENDER_WORKER_MCP_COMMAND__ --base-port 9970 --worker auto"
+      command: "/usr/bin/env CHATGPT_BLENDER_WORKER_RUNTIME=__WORKER_RUNTIME__ BLENDER_WORKER_AUTOSCALE=1 BLENDER_BIN=__BLENDER_BIN__ BLENDER_MCP_COMMAND=__BLENDER_MCP_COMMAND__ __BLENDER_WORKER_MCP_COMMAND__ --worker auto"

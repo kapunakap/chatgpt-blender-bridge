@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from blender_bridge.mcp_proxy import WorkerMcpProxy, run_stdio_proxy  # noqa: E402
 from blender_bridge.project_routing import metadata_from_environment  # noqa: E402
+from blender_bridge.supervisor import CapacityBusyError, SupervisorClient  # noqa: E402
 from blender_bridge.workers import WorkerBusyError, WorkerError, WorkerManager  # noqa: E402
 
 
@@ -22,6 +23,41 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _autoscaled_proxy(
+    manager: WorkerManager,
+    *,
+    args: argparse.Namespace,
+    startup_metadata: dict[str, str],
+) -> WorkerMcpProxy:
+    client = SupervisorClient.for_runtime(
+        manager.runtime_dir,
+        socket_path=args.supervisor_socket,
+        timeout=args.supervisor_timeout,
+    )
+    max_attempts = max(2, int(os.environ.get("BLENDER_WORKER_MAX_COUNT", "5")) + 1)
+    last_error: Exception | None = None
+    for _ in range(max_attempts):
+        candidate = client.ensure_capacity(startup_metadata or None)
+        try:
+            return WorkerMcpProxy(
+                manager,
+                mcp_command=args.mcp_command,
+                worker_id=str(candidate["id"]),
+                startup_metadata=startup_metadata or None,
+                startup_open_blend=args.open_blend,
+            )
+        except WorkerBusyError as exc:
+            # Another stdio session may have leased the candidate between the
+            # supervisor response and this process taking the existing flock.
+            # Re-querying lets the single supervisor either select another free
+            # worker or grow the pool without ever spawning from tunnel-client.
+            last_error = exc
+            continue
+    raise WorkerBusyError(
+        f"could not lease autoscaled Blender capacity after {max_attempts} attempts: {last_error}"
+    )
 
 
 def main() -> int:
@@ -47,6 +83,21 @@ def main() -> int:
         "--base-port",
         type=int,
         default=int(os.environ.get("BLENDER_WORKER_BASE_PORT", "9970")),
+    )
+    parser.add_argument(
+        "--autoscale",
+        action="store_true",
+        default=_env_bool("BLENDER_WORKER_AUTOSCALE"),
+        help="request capacity from the local worker supervisor instead of spawning here",
+    )
+    parser.add_argument(
+        "--supervisor-socket",
+        default=os.environ.get("BLENDER_WORKER_SUPERVISOR_SOCKET"),
+    )
+    parser.add_argument(
+        "--supervisor-timeout",
+        type=float,
+        default=float(os.environ.get("BLENDER_WORKER_SUPERVISOR_TIMEOUT_SECONDS", "35")),
     )
     parser.add_argument("--project", default=os.environ.get("BLENDER_PROJECT"))
     parser.add_argument("--repo", default=os.environ.get("BLENDER_PROJECT_REPO"))
@@ -74,21 +125,37 @@ def main() -> int:
 
     try:
         manager = WorkerManager(runtime_dir=args.runtime, blender_bin=args.blender_bin)
-        if args.ensure_count:
-            manager.start(
-                count=args.ensure_count,
-                gui_count=args.gui_count,
-                base_port=args.base_port,
+        if args.autoscale:
+            if args.ensure_count:
+                raise WorkerError(
+                    "--ensure-count/BLENDER_WORKER_COUNT cannot be used with autoscaling; "
+                    "the local user-session supervisor owns Blender process lifecycle"
+                )
+            if args.worker != "auto":
+                raise WorkerError(
+                    "--worker must be auto when autoscaling is enabled; worker IDs stay internal"
+                )
+            proxy = _autoscaled_proxy(
+                manager,
+                args=args,
+                startup_metadata=startup_metadata,
             )
-        proxy = WorkerMcpProxy(
-            manager,
-            mcp_command=args.mcp_command,
-            worker_id=args.worker,
-            startup_metadata=startup_metadata or None,
-            startup_open_blend=args.open_blend,
-        )
+        else:
+            if args.ensure_count:
+                manager.start(
+                    count=args.ensure_count,
+                    gui_count=args.gui_count,
+                    base_port=args.base_port,
+                )
+            proxy = WorkerMcpProxy(
+                manager,
+                mcp_command=args.mcp_command,
+                worker_id=args.worker,
+                startup_metadata=startup_metadata or None,
+                startup_open_blend=args.open_blend,
+            )
         return run_stdio_proxy(proxy)
-    except (WorkerBusyError, WorkerError, OSError) as exc:
+    except (CapacityBusyError, WorkerBusyError, WorkerError, OSError) as exc:
         print(f"blender-worker-mcp: {exc}", file=sys.stderr)
         return 1
 
